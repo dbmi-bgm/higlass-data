@@ -9,7 +9,7 @@ Make sure `poetry` is installed on your system. Clone the repository and run `po
 ## Run a script
 
 ```
-poetry run create-cohort-vcf -i ./PATH/input.vcf -o ./PATH/input.output.vcf -q False
+poetry run create-cohort-vcf -i ./PATH/input.vcf -o ./PATH/input.multires.vcf -q False
 
 ```
 
