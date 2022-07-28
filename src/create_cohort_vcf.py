@@ -1,11 +1,19 @@
+from audioop import mul
 import click
 import vcf
+import random
+from tracemalloc import start
+import numpy as np
 import pandas as pd
 import copy
 import negspy.coordinates as nc
+import datetime
+
+date = datetime.datetime.now()
+
 
 TILE_SIZE = 1024  # Higlass tile size for 1D tracks
-MAX_ZOOM_LEVEL = 23
+MAX_ZOOM_LEVEL = 19
 CONSEQUENCE_LEVELS = ["HIGH", "LOW", "MODERATE", "MODIFIER"]
 
 
@@ -40,21 +48,30 @@ class MultiResVcf:
         self.chrom_info = nc.get_chrominfo("hg38")
 
     def create_multires_vcf(self):
+        print("start time is"+str((datetime.datetime.now()-date).total_seconds()*1000))
         self.assign_ids()
+        print("ids are assigned"+str((datetime.datetime.now()-date).total_seconds()*1000))
         self.index_variants_by_id()
+        print("varients are index"+str((datetime.datetime.now()-date).total_seconds()*1000))
         self.create_variants_dataframe()
+        print("variant data frames created"+str((datetime.datetime.now()-date).total_seconds()*1000))
+        self.split_variants()
+        print("varients are split"+str((datetime.datetime.now()-date).total_seconds()*1000))
         self.aggregate()
+        print("aggregated"+str((datetime.datetime.now()-date).total_seconds()*1000))
         self.write_vcf()
-
+        print("Done"+str((datetime.datetime.now()-date).total_seconds()*1000))
+    
+    
     def aggregate(self):
-
+        
         if not self.quiet:
             print("Start aggregation")
 
         for zoom_level, tile_size in enumerate(self.tile_sizes):
             if not self.quiet:
                 print("  Current zoom level: ", zoom_level, ". Tile size: ", tile_size)
-
+            totallenofzoomlevel = 0
             # Don't do any aggregation, just copy the values with modified chr
             if zoom_level == 0:
                 for id in self.variants_by_id:
@@ -65,24 +82,24 @@ class MultiResVcf:
                         self.variants_multires.append(variant_copy)
                 continue
 
-            current_pos = 0
+           
             current_index = 0
-            last_pos = self.variants_df["absPos"].iloc[-1]
-
-            while current_pos < last_pos:
-                current_index = current_index + 1
-                new_pos = tile_size * current_index
+            
+            max_tiles = 2**(MAX_ZOOM_LEVEL-zoom_level-1)
+            for current_index in range(0,max_tiles):
+                
                 variant_in_bin_ids = []
 
-                variants_in_bin = self.variants_df[
-                    (self.variants_df.absPos >= current_pos)
-                    & (self.variants_df.absPos < new_pos)
-                ]
+                variants_in_bin = self.variants_df_aranged[str(zoom_level)+"."+str(current_index)]
+                if len(variants_in_bin) >0:
+                    totallenofzoomlevel +=1
+                current_index = current_index + 1
+                new_pos = tile_size * current_index                
                 num_variants_in_bin = len(variants_in_bin.index)
-                current_pos = new_pos
+                
                 if num_variants_in_bin == 0:
                     continue
-
+               
                 for consequence in CONSEQUENCE_LEVELS:
                     variants_per_consequence = variants_in_bin[
                         (variants_in_bin.consequence == consequence)
@@ -107,6 +124,33 @@ class MultiResVcf:
                     if variant_copy.CHROM in self.chromosomes:
                         variant_copy.CHROM = variant_copy.CHROM + "_" + str(zoom_level)
                         self.variants_multires.append(variant_copy)
+            print(current_index)
+            print(totallenofzoomlevel)
+    
+    def split_variants(self ):
+        dictionaryOfZoomLevels = {str(MAX_ZOOM_LEVEL-1)+".0":self.variants_df}
+        def split(DF, wheretosplit,multiplier):
+            return([DF[DF["absPos"]<=wheretosplit*(2*multiplier+1)],DF[DF["absPos"]>wheretosplit*(2*multiplier+1)]])
+        
+        
+        for zoom_level in range((MAX_ZOOM_LEVEL-1),0,-1):
+           
+            print(zoom_level)
+            max_tiles = 2**(MAX_ZOOM_LEVEL-zoom_level-1)
+            #print(max_tiles)
+            new_zoom_level = zoom_level-1
+            wheretosplit = 1024*(2**new_zoom_level)
+            for i_tile in range(0,max_tiles):
+
+                split_result = split(dictionaryOfZoomLevels[f'{zoom_level}.{i_tile}'],wheretosplit,i_tile)
+                dictionaryOfZoomLevels[f'{new_zoom_level}.{2*i_tile}'] = split_result[0]
+                dictionaryOfZoomLevels[f'{new_zoom_level}.{2*i_tile+1}'] = split_result[1]
+                
+        self.variants_df_aranged =dictionaryOfZoomLevels
+        #list starts from bigggest data set then goes down
+
+    
+
 
     def load_variants(self):
         if not self.quiet:
