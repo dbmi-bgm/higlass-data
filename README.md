@@ -13,7 +13,8 @@ Make sure `poetry` is installed on your system. Clone the repository and run `po
 # -o output file path
 # -q Shows logs when set to False
 poetry run create-cohort-vcf -i ./PATH/input.vcf -o ./PATH/input.multires.vcf -q False
-
+the line i want to run:
+poetry run create-cohort-vcf -i "C:\Users\thebe\Documents\test_data.chr1.vcf" -o "C:\Users\thebe\Documents\test_dataresults.chr1.vcf" -q False
 ```
 
 

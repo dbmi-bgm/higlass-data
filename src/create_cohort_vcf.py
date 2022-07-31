@@ -1,8 +1,16 @@
+from audioop import mul
 import click
 import vcf
+import random
+from tracemalloc import start
+import numpy as np
 import pandas as pd
 import copy
 import negspy.coordinates as nc
+import datetime
+
+date = datetime.datetime.now()
+
 
 TILE_SIZE = 1024  # Higlass tile size for 1D tracks
 MAX_ZOOM_LEVEL = 23
@@ -40,21 +48,30 @@ class MultiResVcf:
         self.chrom_info = nc.get_chrominfo("hg38")
 
     def create_multires_vcf(self):
+        print("start time is"+str((datetime.datetime.now()-date).total_seconds()*1000))
         self.assign_ids()
+        print("ids are assigned"+str((datetime.datetime.now()-date).total_seconds()*1000))
         self.index_variants_by_id()
+        print("varients are index"+str((datetime.datetime.now()-date).total_seconds()*1000))
         self.create_variants_dataframe()
+        print("variant data frames created"+str((datetime.datetime.now()-date).total_seconds()*1000))
+        self.split_variants()
+        print("varients are split"+str((datetime.datetime.now()-date).total_seconds()*1000))
         self.aggregate()
+        print("aggregated"+str((datetime.datetime.now()-date).total_seconds()*1000))
         self.write_vcf()
-
+        print("Done"+str((datetime.datetime.now()-date).total_seconds()*1000))
+    
+    
     def aggregate(self):
-
+        
         if not self.quiet:
             print("Start aggregation")
 
         for zoom_level, tile_size in enumerate(self.tile_sizes):
             if not self.quiet:
                 print("  Current zoom level: ", zoom_level, ". Tile size: ", tile_size)
-
+            totallenofzoomlevel = 0
             # Don't do any aggregation, just copy the values with modified chr
             if zoom_level == 0:
                 for id in self.variants_by_id:
@@ -65,40 +82,43 @@ class MultiResVcf:
                         self.variants_multires.append(variant_copy)
                 continue
 
-            current_pos = 0
+           
             current_index = 0
-            last_pos = self.variants_df["absPos"].iloc[-1]
-
-            while current_pos < last_pos:
-                current_index = current_index + 1
-                new_pos = tile_size * current_index
+            
+            num_tiles = 2**(MAX_ZOOM_LEVEL-zoom_level-1)
+            for current_index in range(0,num_tiles):
+                
                 variant_in_bin_ids = []
 
-                variants_in_bin = self.variants_df[
-                    (self.variants_df.absPos >= current_pos)
-                    & (self.variants_df.absPos < new_pos)
-                ]
+                variants_in_bin = self.variants_df_hierarchical[str(zoom_level)+"."+str(current_index)]
+                if len(variants_in_bin) >0:
+                    totallenofzoomlevel +=1
+                current_index = current_index + 1
+                new_pos = tile_size * current_index                
                 num_variants_in_bin = len(variants_in_bin.index)
-                current_pos = new_pos
+                
                 if num_variants_in_bin == 0:
                     continue
 
-                for consequence in CONSEQUENCE_LEVELS:
-                    variants_per_consequence = variants_in_bin[
-                        (variants_in_bin.consequence == consequence)
-                    ]
-                    num_variants_per_consequence = len(variants_per_consequence.index)
+                if num_variants_in_bin < self.max_variants_per_tile:
+                    variant_in_bin_ids += list(variants_in_bin.iloc[:, 1])
+                else:
+                    for consequence in CONSEQUENCE_LEVELS:
+                        variants_per_consequence = variants_in_bin[
+                            (variants_in_bin.consequence == consequence)
+                        ]
+                        num_variants_per_consequence = len(variants_per_consequence.index)
 
-                    if num_variants_per_consequence > self.max_variants_per_tile:
-                        if not self.quiet:
-                            print(
-                                f"    Removing {num_variants_per_consequence - self.max_variants_per_tile} {consequence} variants from bin {tile_size * (current_index - 1)} - {new_pos} ({num_variants_in_bin} total variants)"
-                            )
-                        variants_per_consequence = variants_per_consequence.sort_values(
-                            by=["importance"], ascending=[False]
-                        )[: self.max_variants_per_tile]
+                        if num_variants_per_consequence > self.max_variants_per_tile:
+                            if not self.quiet:
+                                print(
+                                    f"    Removing {num_variants_per_consequence - self.max_variants_per_tile} {consequence} variants from bin {tile_size * (current_index - 1)} - {new_pos} ({num_variants_in_bin} total variants)"
+                                )
+                            variants_per_consequence = variants_per_consequence.sort_values(
+                                by=["importance"], ascending=[False]
+                            )[: self.max_variants_per_tile]
 
-                    variant_in_bin_ids += list(variants_per_consequence.iloc[:, 1])
+                        variant_in_bin_ids += list(variants_per_consequence.iloc[:, 1])
 
                 variant_in_bin_ids.sort()
                 for id in variant_in_bin_ids:
@@ -107,6 +127,34 @@ class MultiResVcf:
                     if variant_copy.CHROM in self.chromosomes:
                         variant_copy.CHROM = variant_copy.CHROM + "_" + str(zoom_level)
                         self.variants_multires.append(variant_copy)
+            #print(current_index)
+            #print(totallenofzoomlevel)
+    
+    def split_variants(self ):
+        hierarchical_variant_data = {str(MAX_ZOOM_LEVEL-1)+".0":self.variants_df}
+                
+        for zoom_level in range((MAX_ZOOM_LEVEL-1),1,-1):
+           
+            num_tiles = 2**(MAX_ZOOM_LEVEL-zoom_level-1)
+            new_zoom_level = zoom_level-1
+            new_tile_size = TILE_SIZE*(2**new_zoom_level)
+            for i_tile in range(0,num_tiles):
+                tile_data = hierarchical_variant_data[f'{zoom_level}.{i_tile}']
+                if len(tile_data.index) > 0:
+                    # Efficiently split the data using a boolean select
+                    is_variant_in_left_half = tile_data["absPos"] < new_tile_size*(2*i_tile+1)
+                    tile_data_split_left = tile_data[is_variant_in_left_half]
+                    tile_data_split_right = tile_data[~is_variant_in_left_half]
+                    hierarchical_variant_data[f'{new_zoom_level}.{2*i_tile}'] = tile_data_split_left
+                    hierarchical_variant_data[f'{new_zoom_level}.{2*i_tile+1}'] = tile_data_split_right
+                else:
+                    # tile_data is just an empty DataFrame
+                    hierarchical_variant_data[f'{new_zoom_level}.{2*i_tile}'] = tile_data
+                    hierarchical_variant_data[f'{new_zoom_level}.{2*i_tile+1}'] = tile_data
+                
+        self.variants_df_hierarchical = hierarchical_variant_data
+   
+
 
     def load_variants(self):
         if not self.quiet:

@@ -10,3 +10,5 @@ es
 *.log
 *.DS_cache
 *.DS_Store
+test_data.vcf\*
+*.pyc
