@@ -13,7 +13,7 @@ date = datetime.datetime.now()
 
 
 TILE_SIZE = 1024  # Higlass tile size for 1D tracks
-MAX_ZOOM_LEVEL = 19
+MAX_ZOOM_LEVEL = 23
 CONSEQUENCE_LEVELS = ["HIGH", "LOW", "MODERATE", "MODIFIER"]
 
 
@@ -85,12 +85,12 @@ class MultiResVcf:
            
             current_index = 0
             
-            max_tiles = 2**(MAX_ZOOM_LEVEL-zoom_level-1)
-            for current_index in range(0,max_tiles):
+            num_tiles = 2**(MAX_ZOOM_LEVEL-zoom_level-1)
+            for current_index in range(0,num_tiles):
                 
                 variant_in_bin_ids = []
 
-                variants_in_bin = self.variants_df_aranged[str(zoom_level)+"."+str(current_index)]
+                variants_in_bin = self.variants_df_hierarchical[str(zoom_level)+"."+str(current_index)]
                 if len(variants_in_bin) >0:
                     totallenofzoomlevel +=1
                 current_index = current_index + 1
@@ -99,23 +99,26 @@ class MultiResVcf:
                 
                 if num_variants_in_bin == 0:
                     continue
-               
-                for consequence in CONSEQUENCE_LEVELS:
-                    variants_per_consequence = variants_in_bin[
-                        (variants_in_bin.consequence == consequence)
-                    ]
-                    num_variants_per_consequence = len(variants_per_consequence.index)
 
-                    if num_variants_per_consequence > self.max_variants_per_tile:
-                        if not self.quiet:
-                            print(
-                                f"    Removing {num_variants_per_consequence - self.max_variants_per_tile} {consequence} variants from bin {tile_size * (current_index - 1)} - {new_pos} ({num_variants_in_bin} total variants)"
-                            )
-                        variants_per_consequence = variants_per_consequence.sort_values(
-                            by=["importance"], ascending=[False]
-                        )[: self.max_variants_per_tile]
+                if num_variants_in_bin < self.max_variants_per_tile:
+                    variant_in_bin_ids += list(variants_in_bin.iloc[:, 1])
+                else:
+                    for consequence in CONSEQUENCE_LEVELS:
+                        variants_per_consequence = variants_in_bin[
+                            (variants_in_bin.consequence == consequence)
+                        ]
+                        num_variants_per_consequence = len(variants_per_consequence.index)
 
-                    variant_in_bin_ids += list(variants_per_consequence.iloc[:, 1])
+                        if num_variants_per_consequence > self.max_variants_per_tile:
+                            if not self.quiet:
+                                print(
+                                    f"    Removing {num_variants_per_consequence - self.max_variants_per_tile} {consequence} variants from bin {tile_size * (current_index - 1)} - {new_pos} ({num_variants_in_bin} total variants)"
+                                )
+                            variants_per_consequence = variants_per_consequence.sort_values(
+                                by=["importance"], ascending=[False]
+                            )[: self.max_variants_per_tile]
+
+                        variant_in_bin_ids += list(variants_per_consequence.iloc[:, 1])
 
                 variant_in_bin_ids.sort()
                 for id in variant_in_bin_ids:
@@ -124,32 +127,33 @@ class MultiResVcf:
                     if variant_copy.CHROM in self.chromosomes:
                         variant_copy.CHROM = variant_copy.CHROM + "_" + str(zoom_level)
                         self.variants_multires.append(variant_copy)
-            print(current_index)
-            print(totallenofzoomlevel)
+            #print(current_index)
+            #print(totallenofzoomlevel)
     
     def split_variants(self ):
-        dictionaryOfZoomLevels = {str(MAX_ZOOM_LEVEL-1)+".0":self.variants_df}
-        def split(DF, wheretosplit,multiplier):
-            return([DF[DF["absPos"]<=wheretosplit*(2*multiplier+1)],DF[DF["absPos"]>wheretosplit*(2*multiplier+1)]])
-        
-        
-        for zoom_level in range((MAX_ZOOM_LEVEL-1),0,-1):
-           
-            print(zoom_level)
-            max_tiles = 2**(MAX_ZOOM_LEVEL-zoom_level-1)
-            #print(max_tiles)
-            new_zoom_level = zoom_level-1
-            wheretosplit = 1024*(2**new_zoom_level)
-            for i_tile in range(0,max_tiles):
-
-                split_result = split(dictionaryOfZoomLevels[f'{zoom_level}.{i_tile}'],wheretosplit,i_tile)
-                dictionaryOfZoomLevels[f'{new_zoom_level}.{2*i_tile}'] = split_result[0]
-                dictionaryOfZoomLevels[f'{new_zoom_level}.{2*i_tile+1}'] = split_result[1]
+        hierarchical_variant_data = {str(MAX_ZOOM_LEVEL-1)+".0":self.variants_df}
                 
-        self.variants_df_aranged =dictionaryOfZoomLevels
-        #list starts from bigggest data set then goes down
-
-    
+        for zoom_level in range((MAX_ZOOM_LEVEL-1),1,-1):
+           
+            num_tiles = 2**(MAX_ZOOM_LEVEL-zoom_level-1)
+            new_zoom_level = zoom_level-1
+            new_tile_size = TILE_SIZE*(2**new_zoom_level)
+            for i_tile in range(0,num_tiles):
+                tile_data = hierarchical_variant_data[f'{zoom_level}.{i_tile}']
+                if len(tile_data.index) > 0:
+                    # Efficiently split the data using a boolean select
+                    is_variant_in_left_half = tile_data["absPos"] < new_tile_size*(2*i_tile+1)
+                    tile_data_split_left = tile_data[is_variant_in_left_half]
+                    tile_data_split_right = tile_data[~is_variant_in_left_half]
+                    hierarchical_variant_data[f'{new_zoom_level}.{2*i_tile}'] = tile_data_split_left
+                    hierarchical_variant_data[f'{new_zoom_level}.{2*i_tile+1}'] = tile_data_split_right
+                else:
+                    # tile_data is just an empty DataFrame
+                    hierarchical_variant_data[f'{new_zoom_level}.{2*i_tile}'] = tile_data
+                    hierarchical_variant_data[f'{new_zoom_level}.{2*i_tile+1}'] = tile_data
+                
+        self.variants_df_hierarchical = hierarchical_variant_data
+   
 
 
     def load_variants(self):
