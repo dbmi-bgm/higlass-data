@@ -27,12 +27,14 @@ class MultiResVcf:
         self,
         input_filepath,
         output_filepath,
+        importance_column,
         max_variants_per_tile,
         quiet,
     ):
         self.input_filepath = input_filepath
         self.output_filepath = output_filepath
         self.max_variants_per_tile = max_variants_per_tile
+        self.importance_column = importance_column
         self.quiet = quiet
         self.variants = self.load_variants()
         self.chromosomes = self.get_chromosomes()
@@ -43,6 +45,7 @@ class MultiResVcf:
         self.assign_ids()
         self.index_variants_by_id()
         self.create_variants_dataframe()
+        self.split_variants()
         self.aggregate()
         self.write_vcf()
 
@@ -65,40 +68,46 @@ class MultiResVcf:
                         self.variants_multires.append(variant_copy)
                 continue
 
-            current_pos = 0
             current_index = 0
-            last_pos = self.variants_df["absPos"].iloc[-1]
 
-            while current_pos < last_pos:
+            num_tiles = 2 ** (MAX_ZOOM_LEVEL - zoom_level - 1)
+            for current_index in range(0, num_tiles):
+
+                variant_in_bin_ids = []
+                variants_in_bin = self.variants_df_hierarchical[
+                    str(zoom_level) + "." + str(current_index)
+                ]
+
                 current_index = current_index + 1
                 new_pos = tile_size * current_index
-                variant_in_bin_ids = []
-
-                variants_in_bin = self.variants_df[
-                    (self.variants_df.absPos >= current_pos)
-                    & (self.variants_df.absPos < new_pos)
-                ]
                 num_variants_in_bin = len(variants_in_bin.index)
-                current_pos = new_pos
+
                 if num_variants_in_bin == 0:
                     continue
 
-                for consequence in CONSEQUENCE_LEVELS:
-                    variants_per_consequence = variants_in_bin[
-                        (variants_in_bin.consequence == consequence)
-                    ]
-                    num_variants_per_consequence = len(variants_per_consequence.index)
+                if num_variants_in_bin < self.max_variants_per_tile:
+                    variant_in_bin_ids += list(variants_in_bin.iloc[:, 1])
+                else:
+                    for consequence in CONSEQUENCE_LEVELS:
+                        variants_per_consequence = variants_in_bin[
+                            (variants_in_bin.consequence == consequence)
+                        ]
+                        num_variants_per_consequence = len(
+                            variants_per_consequence.index
+                        )
 
-                    if num_variants_per_consequence > self.max_variants_per_tile:
-                        if not self.quiet:
-                            print(
-                                f"    Removing {num_variants_per_consequence - self.max_variants_per_tile} {consequence} variants from bin {tile_size * (current_index - 1)} - {new_pos} ({num_variants_in_bin} total variants)"
+                        if num_variants_per_consequence > self.max_variants_per_tile:
+                            if not self.quiet:
+                                print(
+                                    f"    Removing {num_variants_per_consequence - self.max_variants_per_tile} {consequence} variants from bin {tile_size * (current_index - 1)} - {new_pos} ({num_variants_in_bin} total variants)"
+                                )
+                            variants_per_consequence = (
+                                variants_per_consequence.sort_values(
+                                    by=["importance"], ascending=[False]
+                                )[: self.max_variants_per_tile]
                             )
-                        variants_per_consequence = variants_per_consequence.sort_values(
-                            by=["importance"], ascending=[False]
-                        )[: self.max_variants_per_tile]
 
-                    variant_in_bin_ids += list(variants_per_consequence.iloc[:, 1])
+                        variant_in_bin_ids += list(variants_per_consequence.iloc[:, 1])
 
                 variant_in_bin_ids.sort()
                 for id in variant_in_bin_ids:
@@ -107,6 +116,40 @@ class MultiResVcf:
                     if variant_copy.CHROM in self.chromosomes:
                         variant_copy.CHROM = variant_copy.CHROM + "_" + str(zoom_level)
                         self.variants_multires.append(variant_copy)
+
+    def split_variants(self):
+        hierarchical_variant_data = {str(MAX_ZOOM_LEVEL - 1) + ".0": self.variants_df}
+
+        for zoom_level in range((MAX_ZOOM_LEVEL - 1), 1, -1):
+
+            num_tiles = 2 ** (MAX_ZOOM_LEVEL - zoom_level - 1)
+            new_zoom_level = zoom_level - 1
+            new_tile_size = TILE_SIZE * (2**new_zoom_level)
+            for i_tile in range(0, num_tiles):
+                tile_data = hierarchical_variant_data[f"{zoom_level}.{i_tile}"]
+                if len(tile_data.index) > 0:
+                    # Efficiently split the data using a boolean select
+                    is_variant_in_left_half = tile_data["absPos"] < new_tile_size * (
+                        2 * i_tile + 1
+                    )
+                    tile_data_split_left = tile_data[is_variant_in_left_half]
+                    tile_data_split_right = tile_data[~is_variant_in_left_half]
+                    hierarchical_variant_data[
+                        f"{new_zoom_level}.{2*i_tile}"
+                    ] = tile_data_split_left
+                    hierarchical_variant_data[
+                        f"{new_zoom_level}.{2*i_tile+1}"
+                    ] = tile_data_split_right
+                else:
+                    # tile_data is just an empty DataFrame
+                    hierarchical_variant_data[
+                        f"{new_zoom_level}.{2*i_tile}"
+                    ] = tile_data
+                    hierarchical_variant_data[
+                        f"{new_zoom_level}.{2*i_tile+1}"
+                    ] = tile_data
+
+        self.variants_df_hierarchical = hierarchical_variant_data
 
     def load_variants(self):
         if not self.quiet:
@@ -125,24 +168,10 @@ class MultiResVcf:
         for variant in self.variants:
             self.variants_by_id[variant.ID] = variant
 
-    def importance(self, fisher_score, consequence):
-        # We are treating each consequence level separately, therefore we are just returning the Fisher score here
-        return fisher_score
-
-        # Calculate an imporance values based on Fisher score and most severe consequence
-        consequence_multiplier = 0.7
-
-        if consequence == "HIGH":
-            consequence_multiplier = 1.0
-        elif consequence == "MODERATE":
-            consequence_multiplier = 0.9
-        elif consequence == "LOW":
-            consequence_multiplier = 0.8
-        elif consequence == "MODIFIER":
-            consequence_multiplier = 0.7
-
-        # We are capping the Fisher score at 20 for the importance calculation, larger values might not be more important
-        return min(fisher_score, 20) * consequence_multiplier
+    def importance(self, importance_value):
+        # We are treating each consequence level separately, therefore we are just returning the chosen importance value here
+        # We could do something more fance here and make it dependent on the consequence level
+        return importance_value
 
     # Create a matrix of the data that we use for filtering
     def create_variants_dataframe(self):
@@ -150,7 +179,6 @@ class MultiResVcf:
         ids = []
         pos = []
         absPos = []
-        fisher = []
         importance = []
         consequence = []
 
@@ -165,25 +193,23 @@ class MultiResVcf:
             absPos.append(
                 nc.chr_pos_to_genome_pos(variant.CHROM, variant.POS, self.chrom_info)
             )
-            fisher_score = variant.INFO["fisher_gnomADv3_minuslog10p"][0]
-            if fisher_score == None or fisher_score == "NA":
-                fisher_score = 0.0
-            fisher_score = float(fisher_score)
+            importance_value = variant.INFO[self.importance_column][0]
+            if importance_value == None or importance_value == "NA":
+                importance_value = 0.0
+            importance_value = float(importance_value)
             conseq = variant.INFO["level_most_severe_consequence"][0]
 
             if conseq not in CONSEQUENCE_LEVELS:
                 print(f"Warning: Consequence level {conseq} not expected.")
             consequence.append(conseq)
 
-            fisher.append(fisher_score)
-            importance.append(self.importance(fisher_score, consequence))
+            importance.append(self.importance(importance_value))
 
         d = {
             "chr": chromosomes,
             "id": ids,
             "pos": pos,
             "absPos": absPos,
-            "fisher": fisher,
             "consequence": consequence,
             "importance": importance,
         }
@@ -330,10 +356,19 @@ class MultiResVcf:
 @click.option("-i", "--input-vcf", required=True, type=str)
 @click.option("-o", "--output-vcf", required=True, type=str)
 @click.option(
+    "-c",
+    "--importance-column",
+    required=True,
+    type=str,
+    help="Value in the info field of the VCF that should be sorted by",
+)
+@click.option(
     "-m", "--max-tile-values-per-consequence", default=50, required=False, type=int
 )
 @click.option("-q", "--quiet", required=False, default=True, type=bool)
-def create_cohort_vcf(input_vcf, output_vcf, max_tile_values_per_consequence, quiet):
+def create_cohort_vcf(
+    input_vcf, output_vcf, importance_column, max_tile_values_per_consequence, quiet
+):
     input_filepath = input_vcf
     output_vcf_filepath = output_vcf
     max_variants_per_tile = max_tile_values_per_consequence
@@ -341,6 +376,7 @@ def create_cohort_vcf(input_vcf, output_vcf, max_tile_values_per_consequence, qu
     mrv = MultiResVcf(
         input_filepath,
         output_vcf_filepath,
+        importance_column,
         max_variants_per_tile,
         quiet,
     )
@@ -351,6 +387,6 @@ def create_cohort_vcf(input_vcf, output_vcf, max_tile_values_per_consequence, qu
 if __name__ == "__main__":
     """
     Example:
-    python create_cohort_vcf.py -i joint_calling_results.vcf -o joint_calling_results.multires.vcf -q False
+    python create_cohort_vcf.py -i joint_calling_results.vcf -o joint_calling_results.multires.vcf -c regenie_log10p -q False
     """
     create_cohort_vcf()

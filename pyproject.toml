@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cgap-higlass-data"
-version = "0.1.0"
+version = "0.1.1"
 description = "Data file generation for CGAP's Higlass browsers"
 authors = ["Alexander Veit <alexander_veit@hms.harvard.edu>"]
 license = "MIT"

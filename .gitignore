@@ -6,6 +6,7 @@ node_modules
 data
 dist
 es
+*.pyc
 *.zip
 *.log
 *.DS_cache
