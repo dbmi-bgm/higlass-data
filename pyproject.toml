@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cgap-higlass-data"
-version = "0.1.1"
+version = "0.1.2"
 description = "Data file generation for CGAP's Higlass browsers"
 authors = ["Alexander Veit <alexander_veit@hms.harvard.edu>"]
 license = "MIT"
@@ -11,8 +11,21 @@ packages = [
   { include="src", from="." }
 ]
 
+classifiers = [
+  'License :: OSI Approved :: MIT License',
+  'Natural Language :: English',
+  'Operating System :: POSIX :: Linux',
+
+  # Specify the Python versions you support here. In particular, ensure
+  # that you indicate whether you support Python 2, Python 3 or both.
+  'Programming Language :: Python :: 3',
+  'Programming Language :: Python :: 3.8',
+  'Programming Language :: Python :: 3.9',
+  'Programming Language :: Python :: 3.10',
+]
+
 [tool.poetry.dependencies]
-python = "^3.9"
+python = ">=3.8,<=3.10"
 click = "^8.1.3"
 pandas = "^1.4.3"
 negspy = "^0.2.24"
