@@ -181,8 +181,8 @@ python-versions = ">=3.7"
 
 [metadata]
 lock-version = "1.1"
-python-versions = ">=3.8,<=3.10"
-content-hash = "efc502b7add09de9e96e624bb59676ef03393f1c5ce25ba73cc7fafa1d39f313"
+python-versions = ">=3.8,<3.11"
+content-hash = "a1071d396a57f9534a8047fc4a745a483ce5a9f8ae2967aabc287523590e1078"
 
 [metadata.files]
 attrs = [
