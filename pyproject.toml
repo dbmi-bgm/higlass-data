@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cgap-higlass-data"
-version = "0.1.3"
+version = "0.2.0"
 description = "Data file generation for CGAP's Higlass browsers"
 authors = ["Alexander Veit <alexander_veit@hms.harvard.edu>"]
 license = "MIT"
@@ -8,8 +8,9 @@ readme = "README.md"
 homepage = "https://github.com/dbmi-bgm/higlass-data"
 repository = "https://github.com/dbmi-bgm/higlass-data"
 packages = [
-  { include="src", from="." }
+  { include="higlass_data", from="." }
 ]
+include=["higlass_data", "higlass_data/data/*"]
 
 classifiers = [
   'License :: OSI Approved :: MIT License',
@@ -30,6 +31,7 @@ click = "^8.1.3"
 pandas = "^1.4.3"
 negspy = "^0.2.24"
 PyVCF3 = "^1.0.3"
+importlib-resources = "^5.12.0"
 
 [tool.poetry.dev-dependencies]
 pytest = ">=7.1.2"
@@ -39,4 +41,6 @@ requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-create-cohort-vcf = "src.create_cohort_vcf:create_cohort_vcf"
+create-cohort-vcf = "higlass_data.create_cohort_vcf:create_cohort_vcf"
+create-coverage-bed = "higlass_data.create_coverage_bed:create_coverage_bed"
+convert-bed-to-bw = "higlass_data.conversions:convert_bed_to_bw"

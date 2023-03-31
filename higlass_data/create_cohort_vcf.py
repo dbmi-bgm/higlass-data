@@ -242,34 +242,7 @@ class MultiResVcf:
             variant.ID = id
             id = id + 1
 
-    # UNUSED
-    def create_coverage_bw(self):
-        self.create_variants_dataframe()
-
-        with open(self.output_bw_filepath, "w") as output:
-
-            for chr in self.chromosomes:
-                current_pos = 0
-                current_index = 0
-                chr_variants = self.variants_df[self.variants_df.chr == chr]
-                last_pos = chr_variants["pos"].iloc[-1]
-                while current_pos < last_pos:
-                    new_index = current_index + 1
-                    new_pos = TILE_SIZE * new_index
-                    variants_in_bin = chr_variants[
-                        (chr_variants.pos >= current_pos) & (chr_variants.pos < new_pos)
-                    ]
-                    num_variants_in_bin = len(variants_in_bin.index)
-                    line = "%s\t%s\t%s\t%s\n" % (
-                        chr,
-                        current_pos,
-                        new_pos,
-                        num_variants_in_bin,
-                    )
-                    output.write(line)
-                    current_index = new_index
-                    current_pos = new_pos
-
+    
     # Currently unused. The idea was to not repeat variants on low zoom levels, if there is o aggregation.
     # This would have needed to be handled by the Higlass Cohort track accordingly. It's too complicated
     # and not worth it for now.
@@ -315,40 +288,6 @@ class MultiResVcf:
                     current_pos = new_pos
                 print("-- chromosome", chr, "done")
 
-
-# @click.command()
-# @click.help_option("--help", "-h")
-# @click.option("-i", "--input-vcf", required=True, type=str)
-# @click.option("-o", "--output-vcf", required=False, type=str)
-# @click.option("-b", "--output-bw", required=False, type=str)
-# @click.option(
-#     "-m", "--max-tile-values-per-consequence", default=50, required=False, type=int
-# )
-# @click.option("-q", "--quiet", required=False, default=True, type=bool)
-# # @click.option('-z', '--min-zoom-level', required=False, type=int)
-# def create_higlass_files(
-#     input_vcf, output_vcf, output_bw, max_tile_values_per_consequence, quiet
-# ):
-#     input_filepath = input_vcf
-#     output_vcf_filepath = output_vcf
-#     output_bw_filepath = output_bw
-#     max_variants_per_tile = max_tile_values_per_consequence
-
-#     mrv = MultiResVcf(
-#         input_filepath,
-#         output_vcf_filepath,
-#         output_bw_filepath,
-#         max_variants_per_tile,
-#         quiet,
-#     )
-#     if output_vcf_filepath:
-#         mrv.create_multires_vcf()
-
-#     if output_bw_filepath:
-#         # This will create a bed file. Run the following to convert to a bigwig
-#         # sort -k1,1 -k2,2n temp.bed > temp.sorted.bed
-#         # bedgraphtobigwig temp.bed hg38.txt out.bw
-#         mrv.create_coverage_bw()
 
 
 @click.command()
