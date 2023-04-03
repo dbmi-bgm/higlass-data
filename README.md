@@ -29,7 +29,7 @@ This BED file can be converted to a BW file with the following command
 # -o output BW file path
 # -a assembly (currently only 'hg38' is supported
 # -l number of header lines in the BED file
-convert_bed_to_bw -i ./PATH/input.bed \
+convert-bed-to-bw -i ./PATH/input.bed \
                   -o ./PATH/output.bw \
                   -a hg38 \
                   -l 2
