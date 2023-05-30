@@ -1,6 +1,6 @@
 import click
 import pandas as pd
-import vcf
+from granite.lib import vcf_parser
 import negspy.coordinates as nc
 
 TILE_SIZE = 1024  # Higlass tile size for 1D tracks
@@ -39,10 +39,13 @@ class Coverage:
         if not self.quiet:
             print("Loading variants...")
         variants = []
-        vcf_reader = vcf.Reader(open(self.input_filepath, "r"))
-
-        for record in vcf_reader:
-            variants.append(record)
+        vcf_obj = vcf_parser.Vcf(self.input_filepath)
+        for record in vcf_obj.parse_variants():
+            variants.append({
+                "ID": record.ID,
+                "CHROM": record.CHROM,
+                "POS": record.POS,
+            })
 
         if not self.quiet:
             print("Loading variants complete.")
@@ -60,11 +63,11 @@ class Coverage:
 
         for variant in self.variants:
 
-            chromosomes.append(variant.CHROM)
-            ids.append(variant.ID)
-            pos.append(variant.POS)
+            chromosomes.append(variant["CHROM"])
+            ids.append(variant["ID"])
+            pos.append(variant["POS"])
             absPos.append(
-                nc.chr_pos_to_genome_pos(variant.CHROM, variant.POS, self.chrom_info)
+                nc.chr_pos_to_genome_pos(variant["CHROM"], variant["POS"], self.chrom_info)
             )
 
         d = {
@@ -78,7 +81,7 @@ class Coverage:
     def get_chromosomes(self):
         if not self.quiet:
             print("Extracting chromosomes...")
-        chrs = list(set(map(lambda v: v.CHROM, self.variants)))
+        chrs = list(set(map(lambda v: v["CHROM"], self.variants)))
         if "chrM" in chrs:
             chrs.remove("chrM")
         chrs.sort()

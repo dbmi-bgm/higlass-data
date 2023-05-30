@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cgap-higlass-data"
-version = "0.2.0"
+version = "0.3.0"
 description = "Data file generation for CGAP's Higlass browsers"
 authors = ["Alexander Veit <alexander_veit@hms.harvard.edu>"]
 license = "MIT"
@@ -30,6 +30,7 @@ python = ">=3.8,<3.11"
 click = "^8.1.3"
 pandas = "^1.4.3"
 negspy = "^0.2.24"
+granite-suite = "0.2.0"
 PyVCF3 = "^1.0.3"
 importlib-resources = "^5.12.0"
 
