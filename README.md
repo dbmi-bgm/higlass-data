@@ -47,6 +47,8 @@ This command creates a multiresolution VCF file that is compatible to CGAP's coh
 # -c info field in the input VCF that ranks the variants
 # -m maximal tile values per consequence. Controls how may variants are displayed at once and a certain zoom level
 # -q quiet True / False. Toggles verbose output
+# -w chromosome-wise True / False. Significantly less memory intensive, but slightly slower.
+# -t index output. True / False. If true, the output vcf will be indexed.
 create-cohort-vcf -i ./PATH/input.vcf \
                   -o ./PATH/output.vcf \
                   -c p_value_negative_log_10 \

@@ -1,8 +1,10 @@
 import click
 import vcf
 import pandas as pd
-import copy
+import copy, os
+import os.path
 import negspy.coordinates as nc
+from higlass_data.utils import does_tool_exist, get_chroms, get_vcf_header
 
 TILE_SIZE = 1024  # Higlass tile size for 1D tracks
 MAX_ZOOM_LEVEL = 23
@@ -11,24 +13,14 @@ CONSEQUENCE_LEVELS = ["HIGH", "LOW", "MODERATE", "MODIFIER"]
 
 class MultiResVcf:
 
-    input_filepath = ""
-    output_filepath = ""
-    max_variants_per_tile = 0
-    chromosomes = []
-    variants = []
-    variants_multires = []
-    variants_df = []
-    variants_by_id = {}
-    tile_sizes = []
-    chrom_info = ""
-    quiet = True
-
+    
     def __init__(
         self,
         input_filepath,
         output_filepath,
         importance_column,
         max_variants_per_tile,
+        chrom,
         quiet,
     ):
         self.input_filepath = input_filepath
@@ -36,12 +28,17 @@ class MultiResVcf:
         self.max_variants_per_tile = max_variants_per_tile
         self.importance_column = importance_column
         self.quiet = quiet
-        self.variants = self.load_variants()
+        self.variants = self.load_variants(chrom)
+        self.variants_multires = []
+        self.variants_df = []
+        self.variants_by_id = {}
         self.chromosomes = self.get_chromosomes()
         self.tile_sizes = [TILE_SIZE * (2**i) for i in range(0, MAX_ZOOM_LEVEL)]
         self.chrom_info = nc.get_chrominfo("hg38")
 
     def create_multires_vcf(self):
+        if len(self.variants) == 0:
+            return
         self.assign_ids()
         self.index_variants_by_id()
         self.create_variants_dataframe()
@@ -151,17 +148,20 @@ class MultiResVcf:
 
         self.variants_df_hierarchical = hierarchical_variant_data
 
-    def load_variants(self):
+    def load_variants(self, chrom):
         if not self.quiet:
             print("Loading variants...")
         variants = []
-        vcf_reader = vcf.Reader(open(self.input_filepath, "r"))
+        vcf_reader = vcf.Reader(filename=self.input_filepath)
 
         for record in vcf_reader:
-            variants.append(record)
+            if not chrom:
+                variants.append(record)
+            elif chrom and record.CHROM == chrom:
+                variants.append(record)
 
         if not self.quiet:
-            print("Loading variants complete.")
+            print(f"Loading variants complete. Loaded {len(variants)} variants")
         return variants
 
     def index_variants_by_id(self):
@@ -216,14 +216,15 @@ class MultiResVcf:
         self.variants_df = pd.DataFrame(data=d)
 
     def write_vcf(self):
-        vcf_reader = vcf.Reader(open(self.input_filepath, "r"))
+        vcf_reader = vcf.Reader(filename=self.input_filepath)
 
-        with open(self.output_filepath, "w") as output:
+        with open("tmp.output.vcf", "w") as output:
             vcf_writer = vcf.Writer(output, vcf_reader)
-
             for variant in self.variants_multires:
                 vcf_writer.write_record(variant)
                 vcf_writer.flush()
+        
+
 
     def get_chromosomes(self):
         if not self.quiet:
@@ -304,23 +305,79 @@ class MultiResVcf:
 @click.option(
     "-m", "--max-tile-values-per-consequence", default=50, required=False, type=int
 )
+@click.option(
+    "-w", "--chromosome-wise", default=False, required=False, type=bool
+)
+@click.option("-t", "--index-output", required=False, default=True, type=bool)
 @click.option("-q", "--quiet", required=False, default=True, type=bool)
 def create_cohort_vcf(
-    input_vcf, output_vcf, importance_column, max_tile_values_per_consequence, quiet
+    input_vcf, output_vcf, importance_column, max_tile_values_per_consequence, chromosome_wise, index_output, quiet
 ):
     input_filepath = input_vcf
     output_vcf_filepath = output_vcf
     max_variants_per_tile = max_tile_values_per_consequence
 
-    mrv = MultiResVcf(
-        input_filepath,
-        output_vcf_filepath,
-        importance_column,
-        max_variants_per_tile,
-        quiet,
-    )
-    if output_vcf_filepath:
-        mrv.create_multires_vcf()
+    if not does_tool_exist("bgzip"):
+        raise Exception("bgzip is not installed.")
+    if not does_tool_exist("tabix"):
+        raise Exception("tabix is not installed.")
+
+    if chromosome_wise:
+        vcf_header = get_vcf_header()
+        cmd = f"echo '{vcf_header}' > vcf_header.vcf"
+        os.system(cmd)
+        cmd = f"cat vcf_header.vcf | gzip > hgdata.tmp.header.vcf.gz"
+        os.system(cmd)
+
+        for chrom in get_chroms():
+            mrv = MultiResVcf(
+                input_filepath,
+                f"hgdata.tmp.{chrom}.{output_vcf_filepath}",
+                importance_column,
+                max_variants_per_tile,
+                chrom,
+                quiet,
+            )
+            if output_vcf_filepath:
+                mrv.create_multires_vcf()
+                if os.path.exists("tmp.output.vcf"):
+                    tmp_filename = f"hgdata.tmp.{chrom}.{output_vcf_filepath}"
+                    cmd = f"cat tmp.output.vcf | tail -n +3 | gzip > {tmp_filename} || exit 1"
+                    cmd_result = os.system(cmd)
+                    if cmd_result > 0:
+                        raise Exception(f"{cmd} failed.")
+                    os.system(f"rm -f tmp.output.vcf")
+
+        os.system(f"cat hgdata.tmp.header.vcf.gz hgdata.tmp* > multires.tmp.gz || exit 1") 
+        os.system(f"rm -f hgdata.tmp*") 
+
+        #Recompress with bgzip
+        cmd_result = os.system(f"gzip -cd multires.tmp.gz | bgzip --threads 6 -c > {output_vcf_filepath} || exit 1")
+        if cmd_result > 0:
+            raise Exception(f"Recompression failed.")
+        os.system(f"rm -f multires.tmp.gz")
+
+
+    else:
+        mrv = MultiResVcf(
+            input_filepath,
+            output_vcf_filepath,
+            importance_column,
+            max_variants_per_tile,
+            None,
+            quiet,
+        )
+        if output_vcf_filepath:
+            mrv.create_multires_vcf()
+            cmd_result = os.system(f"cat tmp.output.vcf | bgzip --threads 6 -c > {output_vcf_filepath} || exit 1")
+            if cmd_result > 0:
+                raise Exception(f"Compression failed.")
+
+    if index_output:
+        cmd = f"tabix -p vcf {output_vcf_filepath} || exit 1"
+        cmd_result = os.system(cmd)
+        if cmd_result > 0:
+            raise Exception(f"{cmd} failed.")
 
 
 if __name__ == "__main__":
